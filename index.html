@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>💕 小精靈 & 西瓜 記帳本 💕</title>
+    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+    <style>
+        body { font-family: -apple-system, sans-serif; background: linear-gradient(180deg,#ffe3ef,#ffd1e3); margin:0; padding:20px; color:#6d2942; min-height: 100vh; }
+        .container { max-width:500px; margin:auto; }
+        .card { background:white; border-radius:22px; padding:20px; margin-bottom:20px; box-shadow:0 8px 18px rgba(0,0,0,0.05); }
+        h1 { text-align:center; color:#df4d8f; }
+        input, select { width:100%; box-sizing:border-box; padding:12px; margin-top:10px; border-radius:14px; border:1px solid #f3a9c6; font-size: 16px; }
+        button { width:100%; padding:15px; border:none; border-radius:16px; background:#ff6fa9; color:white; font-size:18px; font-weight:bold; margin-top:15px; cursor: pointer; }
+        .record { background:#fff2f8; border-radius:16px; padding:15px; margin-top:12px; border-left: 6px solid #ff97be; display: flex; justify-content: space-between; align-items: center; }
+        .amount { font-weight:bold; color:#cb457e; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>💕 小精靈 & 西瓜 記帳 💕</h1>
+
+    <div class="card">
+        <h3>新增支出</h3>
+        <select id="payer"><option value="小精靈">小精靈</option><option value="西瓜">西瓜</option></select>
+        <input id="title" placeholder="買了什麼？">
+        <input id="amount" type="number" placeholder="多少錢？">
+        <select id="category"><option>餐飲</option><option>交通</option><option>購物</option><option>狗勾</option><option>其他</option></select>
+        <button id="addBtn">確認新增紀錄</button>
+    </div>
+
+    <div class="card">
+        <h3>支出紀錄</h3>
+        <div id="list">讀取中...</div>
+    </div>
+</div>
+
+<script>
+    const SB_URL = "https://dfflacypaegfmgstwzeb.supabase.co";
+    const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRmZmxhY3lwYWVnZm1nc3R3emViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1Mzk3NjksImV4cCI6MjA5NDExNTc2OX0.RsC760Xyq1bTN6zq9Itm3rDoRLqbVgglj6EegkA5gmQ";
+    const supabase = window.supabase.createClient(SB_URL, SB_KEY);
+
+    async function loadData() {
+        const { data, error } = await supabase.from('expenses').select('*').order('created_at', { ascending: false });
+        if (error) return;
+        
+        const listDiv = document.getElementById('list');
+        if (data.length === 0) {
+            listDiv.innerHTML = "目前沒有任何紀錄唷！";
+        } else {
+            listDiv.innerHTML = data.map(item => `
+                <div class="record">
+                    <div><b>${item.title}</b><br><small>${item.payer} | ${item.category}</small></div>
+                    <div class="amount">$${item.amount}</div>
+                </div>
+            `).join('');
+        }
+    }
+
+    // 關鍵修正：確保 ID 叫 addBtn
+    document.getElementById('addBtn').addEventListener('click', async () => {
+        const title = document.getElementById('title').value;
+        const amount = document.getElementById('amount').value;
+        
+        if (!title || !amount) {
+            alert("項目和金額都要填喔！");
+            return;
+        }
+
+        const btn = document.getElementById('addBtn');
+        btn.disabled = true;
+        btn.innerText = "儲存中...";
+
+        const { error } = await supabase.from('expenses').insert([{
+            title: title,
+            amount: Number(amount),
+            payer: document.getElementById('payer').value,
+            category: document.getElementById('category').value,
+            need_type: "必要花費"
+        }]);
+
+        if (error) {
+            alert("新增失敗：" + error.message);
+        } else {
+            alert("✨ 新增成功！");
+            document.getElementById('title').value = "";
+            document.getElementById('amount').value = "";
+            await loadData();
+        }
+        btn.disabled = false;
+        btn.innerText = "確認新增紀錄";
+    });
+
+    loadData();
+</script>
+
+</body>
+</html>
