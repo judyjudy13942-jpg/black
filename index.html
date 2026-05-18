@@ -80,7 +80,6 @@
             transition: color 0.3s ease;
         }
 
-        /* 當額度變成負數時的樣式 */
         .quota-negative {
             color: var(--danger) !important;
             text-shadow: 0 0 20px rgba(239, 68, 68, 0.4);
@@ -125,7 +124,6 @@
             gap: 0.5rem;
         }
 
-        /* 輸入框設計 */
         .form-group {
             margin-bottom: 1rem;
         }
@@ -154,7 +152,6 @@
             box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
         }
 
-        /* 按鈕 */
         .btn {
             width: 100%;
             padding: 0.8rem;
@@ -176,7 +173,6 @@
             background-color: var(--primary-hover);
         }
 
-        /* 歷史紀錄列表 */
         .history-list {
             list-style: none;
             max-height: 250px;
@@ -213,7 +209,6 @@
         .amount-expense { color: var(--text-main); }
         .amount-income { color: var(--success); }
 
-        /* 滾動條優化 */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; }
@@ -257,152 +252,140 @@
 </div>
 
 <script>
-    // 🌟 核心修正 2：移除網址結尾的 /rest/v1/
-    const SUPABASE_URL = "https://muolweoqrmgsvkzibwrj.supabase.co"; 
-    const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im11b2x3ZW9xcm1nc3Zremlid3JqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMDc4MjEsImV4cCI6MjA5NDY4MzgyMX0.R9Unat5-wArSmO4Ew9xHv29IM87Q0Tgofv7yOsjKBP8";
+    // 透過保護性作用域區隔，防止任何重複宣告報錯
+    (function() {
+        const URL = "https://muolweoqrmgsvkzibwrj.supabase.co"; 
+        const KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im11b2x3ZW9xcm1nc3Zremlid3JqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMDc4MjEsImV4cCI6MjA5NDY4MzgyMX0.R9Unat5-wArSmO4Ew9xHv29IM87Q0Tgofv7yOsjKBP8";
 
-    // 🌟 核心修正 3：使用 window.supabase 呼叫 SDK，徹底解決 "already been declared" 報錯
-    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
-
-    let myProfileId = ""; 
-
-    let state = {
-        baseQuota: 1500,
-        carryOver: 0,
-        totalExpense: 0,
-        transactions: []
-    };
-
-    // 從 Supabase 初始化讀取資料
-    async function initData() {
-        try {
-            // A. 抓取 profiles 資料（取得基本額度與上月結餘）
-            const { data: profileData, error: pError } = await supabase
-                .from('profiles')
-                .select('*')
-                .limit(1);
-            
-            if (pError) throw pError;
-            
-            if (profileData && profileData.length > 0) {
-                myProfileId = profileData[0].id; // 記錄資料庫中的 UUID
-                state.baseQuota = parseFloat(profileData[0].monthly_quota) || 1500;
-                state.carryOver = parseFloat(profileData[0].carry_over) || 0;
-            }
-
-            // B. 抓取 transactions 記帳明細
-            const { data: transData, error: tError } = await supabase
-                .from('transactions')
-                .select('*')
-                .order('created_at', { ascending: false }); // 最新紀錄排在最前面
-            
-            if (tError) throw tError;
-
-            if (transData) {
-                state.transactions = transData.map(item => ({
-                    title: item.title,
-                    amount: parseFloat(item.amount),
-                    date: new Date(item.created_at).toLocaleDateString('zh-TW')
-                }));
-
-                // 計算本月總消費（將所有正數的消費金額加總，扣除負數的儲值）
-                state.totalExpense = transData.reduce((sum, item) => sum + parseFloat(item.amount), 0);
-            }
-
-            // 重新更新網頁畫面
-            updateUI();
-
-        } catch (error) {
-            console.error("讀取 Supabase 資料出錯：", error.message);
-            alert("資料讀取失敗，請檢查 Supabase 設定！");
-        }
-    }
-
-    // 畫面渲染函數
-    function updateUI() {
-        // 公式：可用額度 = 基本額度 + 上月結餘 - 本月總消費
-        const currentQuota = state.baseQuota + state.carryOver - state.totalExpense;
-        const quotaDisplay = document.getElementById('quotaDisplay');
-        
-        // 顯示千分位格式的金額
-        quotaDisplay.innerText = `$${currentQuota.toLocaleString()}`;
-        
-        // 看板變成負數時的變色邏輯
-        if (currentQuota < 0) {
-            quotaDisplay.className = "quota-display quota-negative";
-        } else {
-            quotaDisplay.className = "quota-display quota-positive";
-        }
-
-        document.getElementById('baseQuota').innerText = `$${state.baseQuota.toLocaleString()}`;
-        document.getElementById('carryOver').innerText = `$${state.carryOver.toLocaleString()}`;
-        document.getElementById('totalExpense').innerText = `$${state.totalExpense.toLocaleString()}`;
-
-        const listEl = document.getElementById('historyList');
-        if (state.transactions.length === 0) {
-            listEl.innerHTML = `<li class="history-item" style="color: var(--text-muted); justify-content: center;">暫無紀錄</li>`;
+        // 🌟 這裡使用大寫的 window.supabase 來創建客戶端，並指派給區域變數 db
+        if (!window.supabase) {
+            console.error("Supabase SDK 載入失敗，請檢查網路連線");
             return;
         }
+        const db = window.supabase.createClient(URL, KEY);
 
-        listEl.innerHTML = state.transactions.map(item => `
-            <li class="history-item">
-                <div class="item-info">
-                    <div class="item-title">${item.title}</div>
-                    <div class="item-date">${item.date}</div>
-                </div>
-                <div class="item-amount ${item.amount > 0 ? 'amount-expense' : 'amount-income'}">
-                    ${item.amount > 0 ? `-$${item.amount.toLocaleString()}` : `+$${Math.abs(item.amount).toLocaleString()}`}
-                </div>
-            </li>
-        `).join('');
-    }
+        let myProfileId = ""; 
+        let state = {
+            baseQuota: 1500,
+            carryOver: 0,
+            totalExpense: 0,
+            transactions: []
+        };
 
-    // 表單送出事件（寫入資料到 Supabase）
-    document.getElementById('transactionForm').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const title = document.getElementById('title').value;
-        const amount = parseFloat(document.getElementById('amount').value);
+        async function initData() {
+            try {
+                // A. 抓取 profiles
+                const { data: profileData, error: pError } = await db
+                    .from('profiles')
+                    .select('*')
+                    .limit(1);
+                
+                if (pError) throw pError;
+                
+                if (profileData && profileData.length > 0) {
+                    myProfileId = profileData[0].id;
+                    state.baseQuota = parseFloat(profileData[0].monthly_quota) || 1500;
+                    state.carryOver = parseFloat(profileData[0].carry_over) || 0;
+                }
 
-        try {
-            // 將資料 Insert 到 Supabase
-            const { data, error } = await supabase
-                .from('transactions')
-                .insert([
-                    { 
-                        user_id: myProfileId ? myProfileId : null, 
-                        title: title, 
-                        amount: amount 
-                    }
-                ]);
+                // B. 抓取 transactions
+                const { data: transData, error: tError } = await db
+                    .from('transactions')
+                    .select('*')
+                    .order('created_at', { ascending: false });
+                
+                if (tError) throw tError;
 
-            if (error) throw error;
+                if (transData) {
+                    state.transactions = transData.map(item => ({
+                        title: item.title,
+                        amount: parseFloat(item.amount),
+                        date: new Date(item.created_at).toLocaleDateString('zh-TW')
+                    }));
+                    state.totalExpense = transData.reduce((sum, item) => sum + parseFloat(item.amount), 0);
+                }
 
-            // 檢查是否爆額度並觸發 LINE 通知
-            const currentQuota = state.baseQuota + state.carryOver - (state.totalExpense + amount);
+                updateUI();
+            } catch (error) {
+                console.error("資料庫連線或讀取失敗：", error.message);
+            }
+        }
+
+        function updateUI() {
+            const currentQuota = state.baseQuota + state.carryOver - state.totalExpense;
+            const quotaDisplay = document.getElementById('quotaDisplay');
+            
+            quotaDisplay.innerText = `$${currentQuota.toLocaleString()}`;
+            
             if (currentQuota < 0) {
-                sendLineNotification(title, amount, currentQuota);
+                quotaDisplay.className = "quota-display quota-negative";
+            } else {
+                quotaDisplay.className = "quota-display quota-positive";
             }
 
-            // 清空輸入框並重新載入最新資料
-            document.getElementById('title').value = '';
-            document.getElementById('amount').value = '';
-            await initData(); 
+            document.getElementById('baseQuota').innerText = `$${state.baseQuota.toLocaleString()}`;
+            document.getElementById('carryOver').innerText = `$${state.carryOver.toLocaleString()}`;
+            document.getElementById('totalExpense').innerText = `$${state.totalExpense.toLocaleString()}`;
 
-        } catch (error) {
-            console.error("寫入資料失敗：", error.message);
-            alert("記帳失敗：" + error.message);
+            const listEl = document.getElementById('historyList');
+            if (state.transactions.length === 0) {
+                listEl.innerHTML = `<li class="history-item" style="color: var(--text-muted); justify-content: center;">暫無紀錄</li>`;
+                return;
+            }
+
+            listEl.innerHTML = state.transactions.map(item => `
+                <li class="history-item">
+                    <div class="item-info">
+                        <div class="item-title">${item.title}</div>
+                        <div class="item-date">${item.date}</div>
+                    </div>
+                    <div class="item-amount ${item.amount > 0 ? 'amount-expense' : 'amount-income'}">
+                        ${item.amount > 0 ? `-$${item.amount.toLocaleString()}` : `+$${Math.abs(item.amount).toLocaleString()}`}
+                    </div>
+                </li>
+            `).join('');
         }
-    });
 
-    // LINE 通知發送邏輯
-    function sendLineNotification(title, amount, currentQuota) {
-        const message = `\n⚠️ 記帳爆表通知！\n項目：${title}\n金額：$${amount}\n目前剩餘額度：$${currentQuota} (已成負數)`;
-        console.log("🚨 觸發 LINE 通知：", message);
-        // 這裡後續可以安全串接 LINE Notify API 或是 LINE Message API 喔！
-    }
+        document.getElementById('transactionForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const title = document.getElementById('title').value;
+            const amount = parseFloat(document.getElementById('amount').value);
 
-    // 網頁加載完畢後自動執行讀取
-    initData();
+            try {
+                const { error } = await db
+                    .from('transactions')
+                    .insert([
+                        { 
+                            user_id: myProfileId ? myProfileId : null, 
+                            title: title, 
+                            amount: amount 
+                        }
+                    ]);
+
+                if (error) throw error;
+
+                const currentQuota = state.baseQuota + state.carryOver - (state.totalExpense + amount);
+                if (currentQuota < 0) {
+                    sendLineNotification(title, amount, currentQuota);
+                }
+
+                document.getElementById('title').value = '';
+                document.getElementById('amount').value = '';
+                await initData(); 
+
+            } catch (error) {
+                alert("記帳失敗：" + error.message);
+            }
+        });
+
+        function sendLineNotification(title, amount, currentQuota) {
+            const message = `\n⚠️ 記帳爆表通知！\n項目：${title}\n金額：$${amount}\n目前剩餘額度：$${currentQuota} (已成負數)`;
+            console.log("🚨 觸發 LINE 通知：", message);
+        }
+
+        // 啟動執行
+        initData();
+    })();
 </script>
 </body>
 </html>
