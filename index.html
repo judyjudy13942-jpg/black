@@ -344,32 +344,36 @@
         }
 
         // 表單提交
-        document.getElementById('transactionForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const amount = parseFloat(document.getElementById('amount').value);
-            const autoTitle = amount > 0 ? "記帳支出" : "帳戶儲值";
+document.getElementById('transactionForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const amount = parseFloat(document.getElementById('amount').value);
+    const autoTitle = amount > 0 ? "記帳支出" : "帳戶儲值";
 
-            try {
-                // 1. 寫入 Supabase 資料庫
-                const { error } = await db
-                    .from('transactions')
-                    .insert([{ user_id: myProfileId ? myProfileId : null, title: autoTitle, amount: amount }]);
+    try {
+        // 1. 寫入 Supabase 資料庫
+        const { error } = await db
+            .from('transactions')
+            .insert([{ user_id: myProfileId ? myProfileId : null, title: autoTitle, amount: amount }]);
 
-                if (error) throw error;
+        if (error) throw error;
 
-                // 2. 計算即時額度，若變為負數且是消費，則觸發後端安全通知
-                const currentQuota = state.baseQuota + state.carryOver - (state.totalExpense + amount);
-                if (currentQuota < 0 && amount > 0) {
-                    await callSupabaseEdgeFunction(amount, currentQuota);
-                }
+        // 🌟 核心修正：計算即時額度（加上這一筆新金額）
+        const newTotalExpense = state.totalExpense + amount;
+        const currentQuota = state.baseQuota + state.carryOver - newTotalExpense;
+        
+        // 🌟 只要點擊時，算出來的新额度是負數，而且是花錢(amount > 0)，就叫後端發 LINE
+        if (currentQuota < 0 && amount > 0) {
+            await callSupabaseEdgeFunction(amount, currentQuota);
+        }
 
-                document.getElementById('amount').value = '';
-                await initData(); 
+        // 3. 欄位歸零，並且重新從資料庫抓最準確的總花費，刷新網頁畫面
+        document.getElementById('amount').value = '';
+        await initData(); 
 
-            } catch (error) {
-                alert("記帳失敗：" + error.message);
-            }
-        });
+    } catch (error) {
+        alert("記帳失敗：" + error.message);
+    }
+});
 
         // 🌟 串接成功的 Edge Function：精準對齊 swift-function 節點
         async function callSupabaseEdgeFunction(amount, currentQuota) {
