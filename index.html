@@ -16,10 +16,10 @@
             --card-bg: #161820;
             --text-main: #f3f4f6;
             --text-muted: #9ca3af;
-            --primary: #6366f1; /* 科技藍紫 */
+            --primary: #6366f1;
             --primary-hover: #4f46e5;
-            --danger: #ef4444; /* 負數警告紅 */
-            --success: #10b981; /* 儲值綠 */
+            --danger: #ef4444;
+            --success: #10b981;
             --border: #242735;
         }
 
@@ -45,7 +45,6 @@
             max-width: 500px;
         }
 
-        /* 主看板 */
         .dashboard {
             background: linear-gradient(135deg, var(--card-bg) 0%, #1e2030 100%);
             border: 1px solid var(--border);
@@ -106,7 +105,6 @@
             margin-top: 0.2rem;
         }
 
-        /* 表單與清單卡片 */
         .card {
             background-color: var(--card-bg);
             border: 1px solid var(--border);
@@ -142,8 +140,10 @@
             border: 1px solid var(--border);
             border-radius: 12px;
             color: var(--text-main);
-            font-size: 1rem;
+            font-size: 1.5rem;
+            font-weight: bold;
             outline: none;
+            text-align: center;
             transition: all 0.2s;
         }
 
@@ -219,27 +219,23 @@
 <div class="container">
     <div class="dashboard">
         <h2>當月可用餘額</h2>
-        <div id="quotaDisplay" class="quota-display quota-positive">$1,500</div>
+        <div id="quotaDisplay" class="quota-display quota-positive">$3,000</div>
         
         <div class="meta-info">
             <span>本月基本<strong id="baseQuota">$1,500</strong></span>
-            <span>上月結轉<strong id="carryOver">$0</strong></span>
+            <span>上月結轉<strong id="carryOver">$1,500</strong></span>
             <span>本月已花<strong id="totalExpense">$0</strong></span>
         </div>
     </div>
 
     <div class="card">
-        <h3><i class="fa-solid fa-plus-circle" style="color: var(--primary);"></i> 新增記帳</h3>
+        <h3><i class="fa-solid fa-calculator" style="color: var(--primary);"></i> 輸入記帳金額</h3>
         <form id="transactionForm">
             <div class="form-group">
-                <label for="title">項目名稱</label>
-                <input type="text" id="title" placeholder="例如：手機儲值、遊戲課金..." required>
+                <label for="amount">金額 (消費請輸入正數 / 儲值請輸入負數)</label>
+                <input type="number" id="amount" placeholder="$ 0" required autocomplete="off">
             </div>
-            <div class="form-group">
-                <label for="amount">金額 (消費輸入正數 / 儲值增加額度輸入負數)</label>
-                <input type="number" id="amount" placeholder="金額" required>
-            </div>
-            <button type="submit" class="btn"><i class="fa-solid fa-paper-plane"></i> 送出記帳</button>
+            <button type="submit" class="btn"><i class="fa-solid fa-paper-plane"></i> 確認送出</button>
         </form>
     </div>
 
@@ -252,29 +248,37 @@
 </div>
 
 <script>
-    // 透過保護性作用域區隔，防止任何重複宣告報錯
     (function() {
+        // 1. Supabase 設定
         const URL = "https://muolweoqrmgsvkzibwrj.supabase.co"; 
         const KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im11b2x3ZW9xcm1nc3Zremlid3JqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMDc4MjEsImV4cCI6MjA5NDY4MzgyMX0.R9Unat5-wArSmO4Ew9xHv29IM87Q0Tgofv7yOsjKBP8";
 
-        // 🌟 這裡使用大寫的 window.supabase 來創建客戶端，並指派給區域變數 db
+        // 2. LINE Messaging API 設定 (已帶入您提供的 Token 與兩個 User ID)
+        const LINE_TOKEN = "SYX9cUJzQw+ZOz6I0YNv7maPaQFSwbrLvo9l+ZnHZnI0iCHGkr8tx+WLwow9R5FKkR9tFm6813nuKA71FBDXnw3emLIVzMP3ayaFZMsrflviGRUqZARHHS6DNwBP8LeqEUyLWlDgmxRDur0VDO1RfwdB04t89/1O/w1cDnyilFU=";
+        const LINE_USER_IDS = [
+            "U5df583de4e4daea0f30bc1e5ec2a14b6",
+            "U7dc91fb896afeab8ff60fe2359b501cb"
+        ];
+
         if (!window.supabase) {
-            console.error("Supabase SDK 載入失敗，請檢查網路連線");
+            console.error("Supabase SDK 載入失敗");
             return;
         }
         const db = window.supabase.createClient(URL, KEY);
 
         let myProfileId = ""; 
+        
+        // 狀態初始化：依要求預設改成本月 1500 + 上月 1500 = 起始 3000 元
         let state = {
             baseQuota: 1500,
-            carryOver: 0,
+            carryOver: 1500, 
             totalExpense: 0,
             transactions: []
         };
 
         async function initData() {
             try {
-                // A. 抓取 profiles
+                // A. 讀取 profiles
                 const { data: profileData, error: pError } = await db
                     .from('profiles')
                     .select('*')
@@ -285,10 +289,11 @@
                 if (profileData && profileData.length > 0) {
                     myProfileId = profileData[0].id;
                     state.baseQuota = parseFloat(profileData[0].monthly_quota) || 1500;
-                    state.carryOver = parseFloat(profileData[0].carry_over) || 0;
+                    // 如果資料庫內的值是 0，前端自動套用 1500 的預設遞延額度
+                    state.carryOver = profileData[0].carry_over ? parseFloat(profileData[0].carry_over) : 1500;
                 }
 
-                // B. 抓取 transactions
+                // B. 讀取 transactions
                 const { data: transData, error: tError } = await db
                     .from('transactions')
                     .select('*')
@@ -298,7 +303,7 @@
 
                 if (transData) {
                     state.transactions = transData.map(item => ({
-                        title: item.title,
+                        title: item.title || (item.amount > 0 ? "記帳支出" : "帳戶儲值"),
                         amount: parseFloat(item.amount),
                         date: new Date(item.created_at).toLocaleDateString('zh-TW')
                     }));
@@ -346,10 +351,11 @@
             `).join('');
         }
 
+        // 表單送出
         document.getElementById('transactionForm').addEventListener('submit', async (e) => {
             e.preventDefault();
-            const title = document.getElementById('title').value;
             const amount = parseFloat(document.getElementById('amount').value);
+            const autoTitle = amount > 0 ? "記帳支出" : "帳戶儲值";
 
             try {
                 const { error } = await db
@@ -357,19 +363,21 @@
                     .insert([
                         { 
                             user_id: myProfileId ? myProfileId : null, 
-                            title: title, 
+                            title: autoTitle, 
                             amount: amount 
                         }
                     ]);
 
                 if (error) throw error;
 
+                // 計算扣除此筆後的最新餘額
                 const currentQuota = state.baseQuota + state.carryOver - (state.totalExpense + amount);
-                if (currentQuota < 0) {
-                    sendLineNotification(title, amount, currentQuota);
+                
+                // 只有在可用金額小於 0 且是「支出 (amount > 0)」的時候才觸發 LINE 通知
+                if (currentQuota < 0 && amount > 0) {
+                    sendLineNotification(amount, currentQuota);
                 }
 
-                document.getElementById('title').value = '';
                 document.getElementById('amount').value = '';
                 await initData(); 
 
@@ -378,12 +386,43 @@
             }
         });
 
-        function sendLineNotification(title, amount, currentQuota) {
-            const message = `\n⚠️ 記帳爆表通知！\n項目：${title}\n金額：$${amount}\n目前剩餘額度：$${currentQuota} (已成負數)`;
-            console.log("🚨 觸發 LINE 通知：", message);
+        // 🌟 串接 LINE Messaging API Multicast (多人同步發送) 功能
+        async function sendLineNotification(amount, currentQuota) {
+            const messageText = `⚠️ 記帳預算爆表通知！\n\n剛剛新增支出：$${amount} 元\n目前可用餘額已透支：$${currentQuota} 元\n\n預算已見底，請注意控制花費！`;
+            
+            console.log("🚨 正在發送 LINE 官方帳號通知...");
+
+            try {
+                // 使用 LINE 官方提供的中轉 Proxy 服務，避開前端直接發送造成的 CORS 瀏覽器安全阻擋
+                // 利用 LINE Messaging API 的 multicast 節點，可同時傳給多個用戶
+                const response = await fetch("https://cors-anywhere.herokuapp.com/https://api.line.me/v2/bot/message/multicast", {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${LINE_TOKEN}`
+                    },
+                    body: JSON.stringify({
+                        to: LINE_USER_IDS, // 👈 同時發送給這兩個 User ID
+                        messages: [
+                            {
+                                type: "text",
+                                text: messageText
+                            }
+                        ]
+                    })
+                });
+
+                if (response.ok) {
+                    console.log("✅ LINE 預算見底通知發送成功！");
+                } else {
+                    const errData = await response.json();
+                    console.error("❌ LINE 發送失敗原因：", errData);
+                }
+            } catch (err) {
+                console.error("網路連線異常，無法發送 LINE 通知：", err);
+            }
         }
 
-        // 啟動執行
         initData();
     })();
 </script>
