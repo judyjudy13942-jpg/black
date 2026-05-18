@@ -256,9 +256,10 @@
 
 <script>
     // 1. 初始化 Supabase (請替換成你自己的 Supabase URL 與 Anon Key)
-    const SUPABASE_URL = "https://muolweoqrmgsvkzibwrj.supabase.co/rest/v1/";
-    const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im11b2x3ZW9xcm1nc3Zremlid3JqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMDc4MjEsImV4cCI6MjA5NDY4MzgyMX0.R9Unat5-wArSmO4Ew9xHv29IM87Q0Tgofv7yOsjKBP8";
-    const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    // 1. 初始化 Supabase
+const SUPABASE_URL = "https://muolweoqrmgsvkzibwrj.supabase.co"; // 👈 把後面的 /rest/v1/ 拿掉
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im11b2x3ZW9xcm1nc3Zremlid3JqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMDc4MjEsImV4cCI6MjA5NDY4MzgyMX0.R9Unat5-wArSmO4Ew9xHv29IM87Q0Tgofv7yOsjKBP8"; 
+const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     // 模擬的初始狀態數據（實際運作時應從 Supabase 讀取）
     let state = {
