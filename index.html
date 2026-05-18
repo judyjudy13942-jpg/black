@@ -249,16 +249,8 @@
 
 <script>
     (function() {
-        // 1. Supabase 設定
         const URL = "https://muolweoqrmgsvkzibwrj.supabase.co"; 
         const KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im11b2x3ZW9xcm1nc3Zremlid3JqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMDc4MjEsImV4cCI6MjA5NDY4MzgyMX0.R9Unat5-wArSmO4Ew9xHv29IM87Q0Tgofv7yOsjKBP8";
-
-        // 2. LINE Messaging API 設定 (已帶入您提供的 Token 與兩個 User ID)
-        const LINE_TOKEN = "SYX9cUJzQw+ZOz6I0YNv7maPaQFSwbrLvo9l+ZnHZnI0iCHGkr8tx+WLwow9R5FKkR9tFm6813nuKA71FBDXnw3emLIVzMP3ayaFZMsrflviGRUqZARHHS6DNwBP8LeqEUyLWlDgmxRDur0VDO1RfwdB04t89/1O/w1cDnyilFU=";
-        const LINE_USER_IDS = [
-            "U5df583de4e4daea0f30bc1e5ec2a14b6",
-            "U7dc91fb896afeab8ff60fe2359b501cb"
-        ];
 
         if (!window.supabase) {
             console.error("Supabase SDK 載入失敗");
@@ -268,7 +260,6 @@
 
         let myProfileId = ""; 
         
-        // 狀態初始化：依要求預設改成本月 1500 + 上月 1500 = 起始 3000 元
         let state = {
             baseQuota: 1500,
             carryOver: 1500, 
@@ -278,7 +269,7 @@
 
         async function initData() {
             try {
-                // A. 讀取 profiles
+                // A. 讀取 profiles 資料（支援負數結轉邏輯）
                 const { data: profileData, error: pError } = await db
                     .from('profiles')
                     .select('*')
@@ -289,11 +280,11 @@
                 if (profileData && profileData.length > 0) {
                     myProfileId = profileData[0].id;
                     state.baseQuota = parseFloat(profileData[0].monthly_quota) || 1500;
-                    // 如果資料庫內的值是 0，前端自動套用 1500 的預設遞延額度
-                    state.carryOver = profileData[0].carry_over ? parseFloat(profileData[0].carry_over) : 1500;
+                    // 如果資料庫的值不為 0（不論正負數），就採用資料庫的；若剛建立為 0 則預設為 1500
+                    state.carryOver = profileData[0].carry_over !== undefined && profileData[0].carry_over !== 0 ? parseFloat(profileData[0].carry_over) : 1500;
                 }
 
-                // B. 讀取 transactions
+                // B. 讀取 transactions 資料
                 const { data: transData, error: tError } = await db
                     .from('transactions')
                     .select('*')
@@ -320,16 +311,22 @@
             const currentQuota = state.baseQuota + state.carryOver - state.totalExpense;
             const quotaDisplay = document.getElementById('quotaDisplay');
             
-            quotaDisplay.innerText = `$${currentQuota.toLocaleString()}`;
-            
+            // 處理負號顯示與格式化
             if (currentQuota < 0) {
+                quotaDisplay.innerText = `-$${Math.abs(currentQuota).toLocaleString()}`;
                 quotaDisplay.className = "quota-display quota-negative";
             } else {
+                quotaDisplay.innerText = `$${currentQuota.toLocaleString()}`;
                 quotaDisplay.className = "quota-display quota-positive";
             }
 
             document.getElementById('baseQuota').innerText = `$${state.baseQuota.toLocaleString()}`;
-            document.getElementById('carryOver').innerText = `$${state.carryOver.toLocaleString()}`;
+            
+            // 上月結轉如果是負數，就加上負號顯示
+            const carryOverEl = document.getElementById('carryOver');
+            carryOverEl.innerText = state.carryOver < 0 ? `-$${Math.abs(state.carryOver).toLocaleString()}` : `$${state.carryOver.toLocaleString()}`;
+            if(state.carryOver < 0) { carryOverEl.style.color = "var(--danger)"; } else { carryOverEl.style.color = "var(--text-main)"; }
+
             document.getElementById('totalExpense').innerText = `$${state.totalExpense.toLocaleString()}`;
 
             const listEl = document.getElementById('historyList');
@@ -351,31 +348,25 @@
             `).join('');
         }
 
-        // 表單送出
+        // 表單提交
         document.getElementById('transactionForm').addEventListener('submit', async (e) => {
             e.preventDefault();
             const amount = parseFloat(document.getElementById('amount').value);
             const autoTitle = amount > 0 ? "記帳支出" : "帳戶儲值";
 
             try {
+                // 寫入 Supabase 資料庫
                 const { error } = await db
                     .from('transactions')
-                    .insert([
-                        { 
-                            user_id: myProfileId ? myProfileId : null, 
-                            title: autoTitle, 
-                            amount: amount 
-                        }
-                    ]);
+                    .insert([{ user_id: myProfileId ? myProfileId : null, title: autoTitle, amount: amount }]);
 
                 if (error) throw error;
 
-                // 計算扣除此筆後的最新餘額
                 const currentQuota = state.baseQuota + state.carryOver - (state.totalExpense + amount);
                 
-                // 只有在可用金額小於 0 且是「支出 (amount > 0)」的時候才觸發 LINE 通知
+                // 當可用餘額爆表為負數，且本次動作是「消費(amount > 0)」時，觸發後端安全通知
                 if (currentQuota < 0 && amount > 0) {
-                    sendLineNotification(amount, currentQuota);
+                    callSupabaseEdgeFunction(amount, currentQuota);
                 }
 
                 document.getElementById('amount').value = '';
@@ -386,40 +377,22 @@
             }
         });
 
-        // 🌟 串接 LINE Messaging API Multicast (多人同步發送) 功能
-        async function sendLineNotification(amount, currentQuota) {
-            const messageText = `⚠️ 記帳預算爆表通知！\n\n剛剛新增支出：$${amount} 元\n目前可用餘額已透支：$${currentQuota} 元\n\n預算已見底，請注意控制花費！`;
-            
-            console.log("🚨 正在發送 LINE 官方帳號通知...");
-
+        // 🌟 方案 B：調用 Supabase 安全後端 Function
+        async function callSupabaseEdgeFunction(amount, currentQuota) {
+            console.log("🚨 餘額透支，正在透過 Supabase 後端發送 LINE 通知...");
             try {
-                // 使用 LINE 官方提供的中轉 Proxy 服務，避開前端直接發送造成的 CORS 瀏覽器安全阻擋
-                // 利用 LINE Messaging API 的 multicast 節點，可同時傳給多個用戶
-                const response = await fetch("https://cors-anywhere.herokuapp.com/https://api.line.me/v2/bot/message/multicast", {
+                // 呼叫您剛剛部署的 Edge Function 節點
+                await fetch(`${URL}/functions/v1/send-line-notification`, {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
-                        "Authorization": `Bearer ${LINE_TOKEN}`
+                        "Authorization": `Bearer ${KEY}` // 帶上安全公鑰
                     },
-                    body: JSON.stringify({
-                        to: LINE_USER_IDS, // 👈 同時發送給這兩個 User ID
-                        messages: [
-                            {
-                                type: "text",
-                                text: messageText
-                            }
-                        ]
-                    })
+                    body: JSON.stringify({ amount, currentQuota })
                 });
-
-                if (response.ok) {
-                    console.log("✅ LINE 預算見底通知發送成功！");
-                } else {
-                    const errData = await response.json();
-                    console.error("❌ LINE 發送失敗原因：", errData);
-                }
+                console.log("✅ 後端請求發送完畢");
             } catch (err) {
-                console.error("網路連線異常，無法發送 LINE 通知：", err);
+                console.error("呼叫後端通知失敗：", err);
             }
         }
 
