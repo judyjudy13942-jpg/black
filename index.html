@@ -1,99 +1,142 @@
-<!DOCTYPE html>
-<html lang="zh-Hant">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>💕 小精靈 & 西瓜 記帳本 💕</title>
-    <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
-    <style>
-        body { font-family: -apple-system, sans-serif; background: linear-gradient(180deg,#ffe3ef,#ffd1e3); margin:0; padding:20px; color:#6d2942; min-height: 100vh; }
-        .container { max-width:500px; margin:auto; }
-        .card { background:white; border-radius:22px; padding:20px; margin-bottom:20px; box-shadow:0 8px 18px rgba(0,0,0,0.05); }
-        h1 { text-align:center; color:#df4d8f; }
-        input, select { width:100%; box-sizing:border-box; padding:12px; margin-top:10px; border-radius:14px; border:1px solid #f3a9c6; font-size: 16px; }
-        button { width:100%; padding:15px; border:none; border-radius:16px; background:#ff6fa9; color:white; font-size:18px; font-weight:bold; margin-top:15px; cursor: pointer; }
-        .record { background:#fff2f8; border-radius:16px; padding:15px; margin-top:12px; border-left: 6px solid #ff97be; display: flex; justify-content: space-between; align-items: center; }
-        .amount { font-weight:bold; color:#cb457e; }
-    </style>
-</head>
-<body>
+// 1. 初始化 Supabase
+const SUPABASE_URL = "https://muolweoqrmgsvkzibwrj.supabase.co/rest/v1/"; // 替換為你的 URL
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im11b2x3ZW9xcm1nc3Zremlid3JqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMDc4MjEsImV4cCI6MjA5NDY4MzgyMX0.R9Unat5-wArSmO4Ew9xHv29IM87Q0Tgofv7yOsjKBP8"; // 替換為你的 Anon Key
+const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-<div class="container">
-    <h1>💕 小精靈 & 西瓜 記帳 💕</h1>
+// 建立一個固定的 Profile ID (在步驟一指令中建立的測試帳戶)
+// 正式環境中通常會配合 Supabase Auth 取得登入用戶 ID，這裡先用固定 ID 方便你單機測試
+let myProfileId = ""; 
 
-    <div class="card">
-        <h3>新增支出</h3>
-        <select id="payer"><option value="小精靈">小精靈</option><option value="西瓜">西瓜</option></select>
-        <input id="title" placeholder="買了什麼？">
-        <input id="amount" type="number" placeholder="多少錢？">
-        <select id="category"><option>餐飲</option><option>交通</option><option>購物</option><option>狗勾</option><option>其他</option></select>
-        <button id="addBtn">確認新增紀錄</button>
-    </div>
+let state = {
+    baseQuota: 1500,
+    carryOver: 0,
+    totalExpense: 0,
+    transactions: []
+};
 
-    <div class="card">
-        <h3>支出紀錄</h3>
-        <div id="list">讀取中...</div>
-    </div>
-</div>
-
-<script>
-    const SB_URL = "https://dfflacypaegfmgstwzeb.supabase.co";
-    const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRmZmxhY3lwYWVnZm1nc3R3emViIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1Mzk3NjksImV4cCI6MjA5NDExNTc2OX0.RsC760Xyq1bTN6zq9Itm3rDoRLqbVgglj6EegkA5gmQ";
-    const supabase = window.supabase.createClient(SB_URL, SB_KEY);
-
-    async function loadData() {
-        const { data, error } = await supabase.from('expenses').select('*').order('created_at', { ascending: false });
-        if (error) return;
+// 2. 從 Supabase 初始化讀取資料
+async function initData() {
+    try {
+        // A. 抓取 profiles 資料（取得基本額度與上月結餘）
+        const { data: profileData, error: pError } = await supabase
+            .from('profiles')
+            .select('*')
+            .limit(1);
         
-        const listDiv = document.getElementById('list');
-        if (data.length === 0) {
-            listDiv.innerHTML = "目前沒有任何紀錄唷！";
-        } else {
-            listDiv.innerHTML = data.map(item => `
-                <div class="record">
-                    <div><b>${item.title}</b><br><small>${item.payer} | ${item.category}</small></div>
-                    <div class="amount">$${item.amount}</div>
-                </div>
-            `).join('');
+        if (pError) throw pError;
+        
+        if (profileData && profileData.length > 0) {
+            myProfileId = profileData[0].id; // 記錄自己的 UUID
+            state.baseQuota = parseFloat(profileData[0].monthly_quota);
+            state.carryOver = parseFloat(profileData[0].carry_over);
         }
+
+        // B. 抓取 transactions 當月記帳明細
+        const { data: transData, error: tError } = await supabase
+            .from('transactions')
+            .select('*')
+            .order('created_at', { ascending: false }); // 新的在前面
+        
+        if (tError) throw tError;
+
+        if (transData) {
+            state.transactions = transData.map(item => ({
+                title: item.title,
+                amount: parseFloat(item.amount),
+                date: new Date(item.created_at).toLocaleDateString('zh-TW')
+            }));
+
+            // 計算本月總消費（將所有記帳的金額加總）
+            state.totalExpense = transData.reduce((sum, item) => sum + parseFloat(item.amount), 0);
+        }
+
+        // 重新渲染畫面
+        updateUI();
+
+    } catch (error) {
+        console.error("讀取 Supabase 資料出錯：", error.message);
+        alert("資料讀取失敗，請檢查 API 金鑰設定！");
+    }
+}
+
+// 3. 畫面渲染函數 (保持不變)
+function updateUI() {
+    const currentQuota = state.baseQuota + state.carryOver - state.totalExpense;
+    const quotaDisplay = document.getElementById('quotaDisplay');
+    quotaDisplay.innerText = `$${currentQuota.toLocaleString()}`;
+    
+    if (currentQuota < 0) {
+        quotaDisplay.className = "quota-display quota-negative";
+    } else {
+        quotaDisplay.className = "quota-display quota-positive";
     }
 
-    // 關鍵修正：確保 ID 叫 addBtn
-    document.getElementById('addBtn').addEventListener('click', async () => {
-        const title = document.getElementById('title').value;
-        const amount = document.getElementById('amount').value;
-        
-        if (!title || !amount) {
-            alert("項目和金額都要填喔！");
-            return;
+    document.getElementById('baseQuota').innerText = `$${state.baseQuota}`;
+    document.getElementById('carryOver').innerText = `$${state.carryOver}`;
+    document.getElementById('totalExpense').innerText = `$${state.totalExpense}`;
+
+    const listEl = document.getElementById('historyList');
+    if(state.transactions.length === 0) {
+        listEl.innerHTML = `<li class="history-item" style="color: var(--text-muted); justify-content: center;">暫無紀錄</li>`;
+        return;
+    }
+
+    listEl.innerHTML = state.transactions.map(item => `
+        <li class="history-item">
+            <div class="item-info">
+                <div class="item-title">${item.title}</div>
+                <div class="item-date">${item.date}</div>
+            </div>
+            <div class="item-amount ${item.amount > 0 ? 'amount-expense' : 'amount-income'}">
+                ${item.amount > 0 ? `-${item.amount}` : `+${Math.abs(item.amount)}`}
+            </div>
+        </li>
+    `).join('');
+}
+
+// 4. 表單送出事件（寫入資料到 Supabase）
+document.getElementById('transactionForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const title = document.getElementById('title').value;
+    const amount = parseFloat(document.getElementById('amount').value);
+
+    try {
+        // 👉 核心操作：將資料 Insert 到 Supabase
+        const { data, error } = await supabase
+            .from('transactions')
+            .insert([
+                { 
+                    user_id: myProfileId, 
+                    title: title, 
+                    amount: amount 
+                }
+            ]);
+
+        if (error) throw error;
+
+        // 檢查是否爆額度並觸發 LINE 通知
+        const currentQuota = state.baseQuota + state.carryOver - (state.totalExpense + amount);
+        if (currentQuota < 0) {
+            sendLineNotification(title, amount, currentQuota);
         }
 
-        const btn = document.getElementById('addBtn');
-        btn.disabled = true;
-        btn.innerText = "儲存中...";
+        // 清空輸入框並重新從資料庫抓取最新資料更新 UI
+        document.getElementById('title').value = '';
+        document.getElementById('amount').value = '';
+        await initData(); 
 
-        const { error } = await supabase.from('expenses').insert([{
-            title: title,
-            amount: Number(amount),
-            payer: document.getElementById('payer').value,
-            category: document.getElementById('category').value,
-            need_type: "必要花費"
-        }]);
+    } catch (error) {
+        console.error("寫入資料失敗：", error.message);
+        alert("記帳失敗：" + error.message);
+    }
+});
 
-        if (error) {
-            alert("新增失敗：" + error.message);
-        } else {
-            alert("✨ 新增成功！");
-            document.getElementById('title').value = "";
-            document.getElementById('amount').value = "";
-            await loadData();
-        }
-        btn.disabled = false;
-        btn.innerText = "確認新增紀錄";
-    });
+// 5. LINE 通知發送邏輯
+function sendLineNotification(title, amount, currentQuota) {
+    const message = `\n⚠️ 記帳爆表通知！\n項目：${title}\n金額：$${amount}\n目前剩餘額度：$${currentQuota} (已成負數)`;
+    console.log("🚨 觸發 LINE 通知：", message);
+    // 這裡可以串接你的 LINE Notify 或是 LINE Bot API
+}
 
-    loadData();
-</script>
-
-</body>
-</html>
+// 網頁開啟時，觸發初始化讀取
+initData();
