@@ -269,7 +269,6 @@
 
         async function initData() {
             try {
-                // A. 讀取 profiles 資料（支援負數結轉邏輯）
                 const { data: profileData, error: pError } = await db
                     .from('profiles')
                     .select('*')
@@ -280,11 +279,9 @@
                 if (profileData && profileData.length > 0) {
                     myProfileId = profileData[0].id;
                     state.baseQuota = parseFloat(profileData[0].monthly_quota) || 1500;
-                    // 如果資料庫的值不為 0（不論正負數），就採用資料庫的；若剛建立為 0 則預設為 1500
                     state.carryOver = profileData[0].carry_over !== undefined && profileData[0].carry_over !== 0 ? parseFloat(profileData[0].carry_over) : 1500;
                 }
 
-                // B. 讀取 transactions 資料
                 const { data: transData, error: tError } = await db
                     .from('transactions')
                     .select('*')
@@ -311,7 +308,6 @@
             const currentQuota = state.baseQuota + state.carryOver - state.totalExpense;
             const quotaDisplay = document.getElementById('quotaDisplay');
             
-            // 處理負號顯示與格式化
             if (currentQuota < 0) {
                 quotaDisplay.innerText = `-$${Math.abs(currentQuota).toLocaleString()}`;
                 quotaDisplay.className = "quota-display quota-negative";
@@ -322,7 +318,6 @@
 
             document.getElementById('baseQuota').innerText = `$${state.baseQuota.toLocaleString()}`;
             
-            // 上月結轉如果是負數，就加上負號顯示
             const carryOverEl = document.getElementById('carryOver');
             carryOverEl.innerText = state.carryOver < 0 ? `-$${Math.abs(state.carryOver).toLocaleString()}` : `$${state.carryOver.toLocaleString()}`;
             if(state.carryOver < 0) { carryOverEl.style.color = "var(--danger)"; } else { carryOverEl.style.color = "var(--text-main)"; }
@@ -355,18 +350,17 @@
             const autoTitle = amount > 0 ? "記帳支出" : "帳戶儲值";
 
             try {
-                // 寫入 Supabase 資料庫
+                // 1. 寫入 Supabase 資料庫
                 const { error } = await db
                     .from('transactions')
                     .insert([{ user_id: myProfileId ? myProfileId : null, title: autoTitle, amount: amount }]);
 
                 if (error) throw error;
 
+                // 2. 計算即時額度，若變為負數且是消費，則觸發後端安全通知
                 const currentQuota = state.baseQuota + state.carryOver - (state.totalExpense + amount);
-                
-                // 當可用餘額爆表為負數，且本次動作是「消費(amount > 0)」時，觸發後端安全通知
                 if (currentQuota < 0 && amount > 0) {
-                    callSupabaseEdgeFunction(amount, currentQuota);
+                    await callSupabaseEdgeFunction(amount, currentQuota);
                 }
 
                 document.getElementById('amount').value = '';
@@ -377,12 +371,12 @@
             }
         });
 
-        // 🌟 方案 B：調用 Supabase 安全後端 Function
+        // 🌟 串接成功的 Edge Function：精準對齊 swift-function 節點
         async function callSupabaseEdgeFunction(amount, currentQuota) {
-            console.log("🚨 餘額透支，正在透過 Supabase 後端發送 LINE 通知...");
+            console.log("🚨 餘額透支，正在呼叫後端 swift-function 發送 LINE 通知...");
             try {
-                // 呼叫您剛剛部署的 Edge Function 節點
-                await fetch(`${URL}/functions/v1/send-line-notification`, {
+                // 這裡更換為你新發現的正確 Edge Function 網址
+                const response = await fetch(`${URL}/functions/v1/swift-function`, {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
@@ -390,7 +384,13 @@
                     },
                     body: JSON.stringify({ amount, currentQuota })
                 });
-                console.log("✅ 後端請求發送完畢");
+                
+                if (!response.ok) {
+                    throw new Error(`伺服器回應錯誤狀態碼: ${response.status}`);
+                }
+                
+                const resData = await response.json();
+                console.log("✅ 後端 Edge Function 執行結果：", resData);
             } catch (err) {
                 console.error("呼叫後端通知失敗：", err);
             }
