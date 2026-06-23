@@ -33,7 +33,7 @@
             margin: 0;
             padding: 0;
             font-family: 'Inter', "Microsoft JhengHei", sans-serif;
-            -webkit-tap-highlight-color: transparent; /* 移除手機點擊陰影 */
+            -webkit-tap-highlight-color: transparent;
         }
 
         body {
@@ -225,12 +225,12 @@
 <div class="container">
     <div class="dashboard">
         <h2>當月可用餘額</h2>
-        <div id="quotaDisplay" class="quota-display quota-positive">$3,000</div>
+        <div id="quotaDisplay" class="quota-display quota-positive">$0</div>
         
         <div class="meta-info">
             <span>本月基本<strong id="baseQuota">$1,500</strong></span>
-            <span>上月結轉<strong id="carryOver">$1,500</strong></span>
-            <span>本月已花<strong id="totalExpense">$0</strong></span>
+            <span>歷史總累積額度<strong id="carryOver">$0</strong></span>
+            <span>當月已花消費<strong id="totalExpense">$0</strong></span>
         </div>
     </div>
 
@@ -255,7 +255,6 @@
 
 <script>
     (function() {
-        // 🌟 防止 iOS 在 Standalone 模式下點擊連結開啟新分頁
         if (("standalone" in window.navigator) && window.navigator.standalone) {
             var noddy, remotes = false;
             document.addEventListener('click', function(event) {
@@ -283,8 +282,9 @@
         
         let state = {
             baseQuota: 1500,
-            carryOver: 1500, 
-            totalExpense: 0,
+            totalAllocatedQuota: 0, // 🌟 新增：從 4 月到現在總共發放的總額度
+            currentMonthExpense: 0, // 🌟 新增：只有當月份的花費
+            allTimeNetTransactions: 0, // 🌟 新增：全歷史總記帳淨額 (消費總和 - 儲值總和)
             transactions: []
         };
 
@@ -300,9 +300,17 @@
                 if (profileData && profileData.length > 0) {
                     myProfileId = profileData[0].id;
                     state.baseQuota = parseFloat(profileData[0].monthly_quota) || 1500;
-                    state.carryOver = profileData[0].carry_over !== undefined && profileData[0].carry_over !== 0 ? parseFloat(profileData[0].carry_over) : 1500;
                 }
 
+                // 計算從 2026 年 4 月開始共發放了幾個月
+                const startDate = new Date(2026, 3, 1); // 💡 2026年4月1日 (JavaScript 月份從 0 開始，3 代表 4 月)
+                const today = new Date();
+                const monthsPassed = (today.getFullYear() - startDate.getFullYear()) * 12 + (today.getMonth() - startDate.getMonth()) + 1;
+                
+                // 🌟 動態計算總累積額度 (例如過 3 個月就是 1500 * 3 = 4500)
+                state.totalAllocatedQuota = monthsPassed * state.baseQuota;
+
+                // 撈取明細
                 const { data: transData, error: tError } = await db
                     .from('transactions')
                     .select('*')
@@ -316,7 +324,20 @@
                         amount: parseFloat(item.amount),
                         date: new Date(item.created_at).toLocaleDateString('zh-TW')
                     }));
-                    state.totalExpense = transData.reduce((sum, item) => sum + parseFloat(item.amount), 0);
+
+                    // 1. 計算全歷史的記帳淨額總和 (amount 正值代表消費、負值代表儲值)
+                    state.allTimeNetTransactions = transData.reduce((sum, item) => sum + parseFloat(item.amount), 0);
+
+                    // 2. 統計「只有本月」的純消費金額 (用來顯示在 UI「當月已花」上)
+                    const currentYear = today.getFullYear();
+                    const currentMonth = today.getMonth();
+                    state.currentMonthExpense = transData.reduce((sum, item) => {
+                        const tDate = new Date(item.created_at);
+                        if (tDate.getFullYear() === currentYear && tDate.getMonth() === currentMonth && parseFloat(item.amount) > 0) {
+                            return sum + parseFloat(item.amount);
+                        }
+                        return sum;
+                    }, 0);
                 }
 
                 updateUI();
@@ -326,7 +347,8 @@
         }
 
         function updateUI() {
-            const currentQuota = state.baseQuota + state.carryOver - state.totalExpense;
+            // 🌟 核心全自動公式：可用餘額 = 歷史發放總额度 - 歷史所有記帳淨損益
+            const currentQuota = state.totalAllocatedQuota - state.allTimeNetTransactions;
             const quotaDisplay = document.getElementById('quotaDisplay');
             
             if (currentQuota < 0) {
@@ -339,11 +361,11 @@
 
             document.getElementById('baseQuota').innerText = `$${state.baseQuota.toLocaleString()}`;
             
-            const carryOverEl = document.getElementById('carryOver');
-            carryOverEl.innerText = state.carryOver < 0 ? `-$${Math.abs(state.carryOver).toLocaleString()}` : `$${state.carryOver.toLocaleString()}`;
-            if(state.carryOver < 0) { carryOverEl.style.color = "var(--danger)"; } else { carryOverEl.style.color = "var(--text-main)"; }
+            // 將原本的結轉，改為更直觀的呈現歷史總額度
+            document.getElementById('carryOver').innerText = `$${state.totalAllocatedQuota.toLocaleString()}`;
 
-            document.getElementById('totalExpense').innerText = `$${state.totalExpense.toLocaleString()}`;
+            // 當月已花
+            document.getElementById('totalExpense').innerText = `$${state.currentMonthExpense.toLocaleString()}`;
 
             const listEl = document.getElementById('historyList');
             if (state.transactions.length === 0) {
@@ -376,11 +398,12 @@
 
                 if (error) throw error;
 
-                const newTotalExpense = state.totalExpense + amount;
-                const currentQuota = state.baseQuota + state.carryOver - newTotalExpense;
+                // 即時透支預警判斷
+                const futureNetTransactions = state.allTimeNetTransactions + amount;
+                const futureQuota = state.totalAllocatedQuota - futureNetTransactions;
                 
-                if (currentQuota < 0 && amount > 0) {
-                    await callSupabaseEdgeFunction(amount, currentQuota);
+                if (futureQuota < 0 && amount > 0) {
+                    await callSupabaseEdgeFunction(amount, futureQuota);
                 }
 
                 document.getElementById('amount').value = '';
