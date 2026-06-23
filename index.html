@@ -2,8 +2,13 @@
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>儲值記帳控制台</title>
+    
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="儲值記帳">
+    <meta name="mobile-web-app-capable" content="yes">
     
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -28,6 +33,7 @@
             margin: 0;
             padding: 0;
             font-family: 'Inter', "Microsoft JhengHei", sans-serif;
+            -webkit-tap-highlight-color: transparent; /* 移除手機點擊陰影 */
         }
 
         body {
@@ -233,7 +239,7 @@
         <form id="transactionForm">
             <div class="form-group">
                 <label for="amount">金額 (消費請輸入正數 / 儲值請輸入負數)</label>
-                <input type="number" id="amount" placeholder="$ 0" required autocomplete="off">
+                <input type="number" id="amount" inputmode="numeric" pattern="[0-9]*" placeholder="$ 0" required autocomplete="off">
             </div>
             <button type="submit" class="btn"><i class="fa-solid fa-paper-plane"></i> 確認送出</button>
         </form>
@@ -249,6 +255,21 @@
 
 <script>
     (function() {
+        // 🌟 防止 iOS 在 Standalone 模式下點擊連結開啟新分頁
+        if (("standalone" in window.navigator) && window.navigator.standalone) {
+            var noddy, remotes = false;
+            document.addEventListener('click', function(event) {
+                noddy = event.target;
+                while (noddy.nodeName !== "A" && noddy.nodeName !== "HTML") {
+                    noddy = noddy.parentNode;
+                }
+                if ('href' in noddy && noddy.href.indexOf('http') !== -1 && (noddy.href.indexOf(document.location.host) !== -1 || remotes)) {
+                    event.preventDefault();
+                    document.location.href = noddy.href;
+                }
+            }, false);
+        }
+
         const URL = "https://muolweoqrmgsvkzibwrj.supabase.co"; 
         const KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im11b2x3ZW9xcm1nc3Zremlid3JqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxMDc4MjEsImV4cCI6MjA5NDY4MzgyMX0.R9Unat5-wArSmO4Ew9xHv29IM87Q0Tgofv7yOsjKBP8";
 
@@ -343,48 +364,41 @@
             `).join('');
         }
 
-        // 表單提交
-document.getElementById('transactionForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const amount = parseFloat(document.getElementById('amount').value);
-    const autoTitle = amount > 0 ? "記帳支出" : "帳戶儲值";
+        document.getElementById('transactionForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const amount = parseFloat(document.getElementById('amount').value);
+            const autoTitle = amount > 0 ? "記帳支出" : "帳戶儲值";
 
-    try {
-        // 1. 寫入 Supabase 資料庫
-        const { error } = await db
-            .from('transactions')
-            .insert([{ user_id: myProfileId ? myProfileId : null, title: autoTitle, amount: amount }]);
+            try {
+                const { error } = await db
+                    .from('transactions')
+                    .insert([{ user_id: myProfileId ? myProfileId : null, title: autoTitle, amount: amount }]);
 
-        if (error) throw error;
+                if (error) throw error;
 
-        // 🌟 核心修正：計算即時額度（加上這一筆新金額）
-        const newTotalExpense = state.totalExpense + amount;
-        const currentQuota = state.baseQuota + state.carryOver - newTotalExpense;
-        
-        // 🌟 只要點擊時，算出來的新额度是負數，而且是花錢(amount > 0)，就叫後端發 LINE
-        if (currentQuota < 0 && amount > 0) {
-            await callSupabaseEdgeFunction(amount, currentQuota);
-        }
+                const newTotalExpense = state.totalExpense + amount;
+                const currentQuota = state.baseQuota + state.carryOver - newTotalExpense;
+                
+                if (currentQuota < 0 && amount > 0) {
+                    await callSupabaseEdgeFunction(amount, currentQuota);
+                }
 
-        // 3. 欄位歸零，並且重新從資料庫抓最準確的總花費，刷新網頁畫面
-        document.getElementById('amount').value = '';
-        await initData(); 
+                document.getElementById('amount').value = '';
+                await initData(); 
 
-    } catch (error) {
-        alert("記帳失敗：" + error.message);
-    }
-});
+            } catch (error) {
+                alert("記帳失敗：" + error.message);
+            }
+        });
 
-        // 🌟 串接成功的 Edge Function：精準對齊 swift-function 節點
         async function callSupabaseEdgeFunction(amount, currentQuota) {
             console.log("🚨 餘額透支，正在呼叫後端 swift-function 發送 LINE 通知...");
             try {
-                // 這裡更換為你新發現的正確 Edge Function 網址
                 const response = await fetch(`${URL}/functions/v1/swift-function`, {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json",
-                        "Authorization": `Bearer ${KEY}` // 帶上安全公鑰
+                        "Authorization": `Bearer ${KEY}`
                     },
                     body: JSON.stringify({ amount, currentQuota })
                 });
